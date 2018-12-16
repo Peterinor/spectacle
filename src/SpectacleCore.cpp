@@ -91,7 +91,7 @@ SpectacleCore::SpectacleCore(StartMode startMode, ImageGrabber::GrabMode grabMod
     case DBusMode:
         break;
     case BackgroundMode: {
-            QTimer::singleShot(0, mImageGrabber, &ImageGrabber::doImageGrab);
+            QTimer::singleShot(delayMsec, mImageGrabber, &ImageGrabber::doImageGrab);
         }
         break;
     case GuiMode:
