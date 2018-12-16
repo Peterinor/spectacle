@@ -42,7 +42,7 @@ class SpectacleCore : public QObject
     };
 
     explicit SpectacleCore(StartMode startMode, ImageGrabber::GrabMode grabMode, QString &saveFileName,
-                    qint64 delayMsec, bool notifyOnGrab, QObject *parent = 0);
+                    bool autoSaveToClipboard ,qint64 delayMsec, bool notifyOnGrab, QObject *parent = 0);
     ~SpectacleCore();
 
     QString filename() const;
@@ -81,6 +81,7 @@ class SpectacleCore : public QObject
     ImageGrabber *mImageGrabber;
     KSMainWindow *mMainWindow;
     bool          isGuiInited;
+    bool          isAutoSaveToClipboard;
 };
 
 #endif // KSCORE_H

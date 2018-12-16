@@ -75,6 +75,7 @@ int main(int argc, char **argv)
         {{"t", "transientonly"},     i18n("Capture the window currently under the cursor, excluding parents of pop-up menus")},
         {{"r", "region"},            i18n("Capture a rectangular region of the screen")},
         {{"g", "gui"},               i18n("Start in GUI mode (default)")},
+        {{"c", "clipboard"},         i18n("Auto copy image to clipboard")},
         {{"b", "background"},        i18n("Take a screenshot and exit without showing the GUI")},
         {{"s", "dbus"},              i18n("Start in DBus-Activation mode")},
         {{"n", "nonotify"},          i18n("In background mode, do not pop up a notification when the screenshot is taken")},
@@ -141,9 +142,14 @@ int main(int argc, char **argv)
         break;
     }
 
+    bool autoSaveToClipboard = false;
+    if(parser.isSet("clipboard")) {
+        autoSaveToClipboard = true;
+    }
+
     // release the kraken
 
-    SpectacleCore core(startMode, grabMode, fileName, delayMsec, notify);
+    SpectacleCore core(startMode, grabMode, fileName, autoSaveToClipboard, delayMsec, notify);
     QObject::connect(&core, &SpectacleCore::allDone, qApp, &QApplication::quit);
 
     // create the dbus connections
