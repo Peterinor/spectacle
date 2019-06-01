@@ -18,10 +18,14 @@
  *  Boston, MA 02110-1301, USA.
  */
 
+#include <QAction>
 #include <KLocalizedString>
 
 #include "QuickEditor.h"
 #include "SpectacleConfig.h"
+
+#include <QtGui>
+#include <QColorDialog>
 
 const qreal QuickEditor::mouseAreaSize = 20.0;
 const qreal QuickEditor::cornerHandleRadius = 8.0;
@@ -61,6 +65,7 @@ QuickEditor::QuickEditor(const QPixmap& pixmap) :
     mBottomHelpTextFont(font()),
     mBottomHelpGridLeftWidth(0),
     mMouseDragState(MouseState::None),
+    mEditToolState(EditToolState::NoEdit),
     mPixmap(pixmap),
     mMagnifierAllowed(false),
     mShowMagnifier(SpectacleConfig::instance()->showMagnifierChecked()),
@@ -69,8 +74,15 @@ QuickEditor::QuickEditor(const QPixmap& pixmap) :
     mRememberRegion(SpectacleConfig::instance()->alwaysRememberRegion() || SpectacleConfig::instance()->rememberLastRectangularRegion()),
     mDisableArrowKeys(false),
     mPrimaryScreenGeo(QGuiApplication::primaryScreen()->geometry()),
-    mbottomHelpLength(bottomHelpMaxLength)
+    mbottomHelpLength(bottomHelpMaxLength),
+
+    history(new QStack<QPixmap>()),
+    mLineWidth(2),
+    mPenColor(Qt::GlobalColor::magenta),
+    mGridGroupBox(new QGroupBox(this))
 {
+    this->initGui();
+
     SpectacleConfig *config = SpectacleConfig::instance();
     if (config->useLightRegionMaskColour()) {
         mMaskColor = QColor(255, 255, 255, 100);
@@ -286,7 +298,24 @@ int QuickEditor::boundsDown(int newTopLeftY, const bool mouse)
 
 void QuickEditor::mousePressEvent(QMouseEvent* event)
 {
-    if (event->button() & Qt::LeftButton) {
+    if(mEditToolState != EditToolState::NoEdit) {
+        QPointF p = event->pos();
+        switch (this->mEditToolState) {
+        case EditToolState::DrawLine:
+            this->setCursor(Qt::CrossCursor);
+            this->mLine.setP1(p);
+            this->mLine.setP2(p);
+            break;
+        default:
+        case EditToolState::DrawRect:
+        case EditToolState::DrawCircle:
+        case EditToolState::DrawText:
+            this->mRect.setLeft(p.x());
+            this->mRect.setTop(p.y());
+            break;
+        }
+        this->mMouseDragState = MouseState::None;
+    } else if (event->button() & Qt::LeftButton) {
         const QPointF& pos = event->pos();
         mMousePos = pos;
         mMagnifierAllowed = true;
@@ -330,6 +359,29 @@ void QuickEditor::mousePressEvent(QMouseEvent* event)
 
 void QuickEditor::mouseMoveEvent(QMouseEvent* event)
 {
+    QString str;
+    if(event->buttons() & Qt::LeftButton) {
+        if(mEditToolState != EditToolState::NoEdit) {
+            QPointF p = event->pos();
+            switch (this->mEditToolState) {
+            case EditToolState::DrawLine:
+                this->mLine.setP2(p);
+                break;
+            case EditToolState::DrawRect:
+            case EditToolState::DrawCircle:
+                this->mRect.setRight(p.x());
+                this->mRect.setBottom(p.y());
+                break;
+            case EditToolState::DrawText:
+                qDebug() << "" << endl;
+                break;
+            default:
+                break;
+            }
+            update();
+        }
+    }
+
     const QPointF& pos = event->pos();
     mMousePos = pos;
     mMagnifierAllowed = true;
@@ -425,12 +477,29 @@ void QuickEditor::mouseReleaseEvent(QMouseEvent* event)
 {
     const auto button = event->button();
     if (button == Qt::LeftButton) {
-        mDisableArrowKeys = false;
-        if(mMouseDragState == MouseState::Inside) {
-            setCursor(Qt::OpenHandCursor);
-        }
-        else if(mMouseDragState == MouseState::Outside && mReleaseToCapture) {
-            acceptSelection();
+        if(mEditToolState != EditToolState::NoEdit) {
+            switch (mEditToolState) {
+            case EditToolState::DrawLine:
+                this->mLine.setP2(event->pos());
+                break;
+            case EditToolState::DrawRect:
+                this->mRect.setRight(event->pos().x());
+                this->mRect.setBottom(event->pos().y());
+                break;
+            default:
+                break;
+            }
+            this->history->push(mPixmap.copy());
+            QPainter painter(&mPixmap);
+            this->drawElements(painter);
+        } else {
+            mDisableArrowKeys = false;
+            if(mMouseDragState == MouseState::Inside) {
+                setCursor(Qt::OpenHandCursor);
+            }
+            else if(mMouseDragState == MouseState::Outside && mReleaseToCapture) {
+                acceptSelection();
+            }
         }
     } else if (button == Qt::RightButton) {
         mSelection.setWidth(0);
@@ -476,15 +545,23 @@ void QuickEditor::paintEvent(QPaintEvent*)
         if (mMouseDragState == MouseState::None) { // mouse is up
             if ((mSelection.width() > 20) && (mSelection.height() > 20)) {
                 drawDragHandles(painter);
+                this->showEditTools(true);
+            } else {
+                this->showEditTools(false);
             }
-
-        } else if (mMagnifierAllowed && (mShowMagnifier ^ mToggleMagnifier)) {
-            drawMagnifier(painter);
+        } else {
+            if (mMagnifierAllowed && (mShowMagnifier ^ mToggleMagnifier)) {
+                drawMagnifier(painter);
+            }
+            this->showEditTools(false);
         }
         drawBottomHelpText(painter);
     } else {
         drawMidHelpText(painter);
+        this->showEditTools(false);
     }
+
+    this->drawElements(painter);
 }
 
 void QuickEditor::layoutBottomHelpText()
@@ -835,4 +912,159 @@ QuickEditor::MouseState QuickEditor::mouseLocation(const QPointF& pos)
     } else {
         return MouseState::Outside;
     }
+}
+
+
+void QuickEditor::toggleDrawState(EditToolState status) {
+    if(this->mEditToolState == status) {
+        this->mEditToolState = EditToolState::NoEdit;
+    } else {
+        this->mEditToolState = status;
+    }
+    //qDebug() << this->mEditToolState << endl;
+}
+
+void QuickEditor::initGui() {
+    this->showEditTools(false);
+
+    mGridGroupBox->setCursor(Qt::ArrowCursor);
+
+    QGridLayout * layout = new QGridLayout();
+    QGridLayout * layout1 = new QGridLayout();
+    QGridLayout * layout2 = new QGridLayout();
+    QGridLayout * layout21 = new QGridLayout();
+
+    mGridGroupBox->setBackgroundRole(QPalette::ColorRole::Background);
+    mGridGroupBox->setAutoFillBackground(true);
+
+    mGridGroupBox->setContentsMargins(0, 0, 0, 0);
+    mGridGroupBox->setLayout(layout);
+
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    layout1->setContentsMargins(0, 0, 0, 0);
+    layout1->setSpacing(0);
+    layout2->setContentsMargins(0, 0, 0, 0);
+    layout2->setSpacing(0);
+    layout21->setContentsMargins(0, 0, 0, 0);
+    layout21->setSpacing(0);
+
+    this->addEditToolButton(0, 0, 1, 1, layout1, "－", "Draw Line.", [&]() {
+        this->toggleDrawState(EditToolState::DrawLine);
+    });
+    this->addEditToolButton(0, 1, 1, 1, layout1, "→", "Draw Arrow.", [&]() {
+        this->toggleDrawState(EditToolState::DrawArrow);
+    });
+    this->addEditToolButton(0, 2, 1, 1, layout1, "□", "Draw Rect.", [&]() {
+        this->toggleDrawState(EditToolState::DrawRect);
+    });
+    this->addEditToolButton(0, 3, 1, 1, layout1, "○", "Draw circle.", [&]() {
+        this->toggleDrawState(EditToolState::DrawCircle);
+    });
+    this->addEditToolButton(0, 4, 1, 1, layout1, "Ａ", "Draw Text.", [&]() {
+        this->toggleDrawState(EditToolState::DrawText);
+    });
+    this->addEditToolButton(0, 5, 1, 1, layout1, "Ｕ", "undo.", [&]() {
+        this->undo();
+    });
+    this->addEditToolButton(0, 6, 1, 1, layout1, "✘", "Cancel.", [&]() {
+        this->grabCancelled();
+    });
+    this->addEditToolButton(0, 7, 1, 1, layout1, "✔", "OK.", [&]() {
+        this->acceptSelection();
+    });
+
+    this->addEditToolButton(0, 0, 1, 1, layout2, "•", "2.", [&]() {
+        this->mLineWidth = 2;
+    });
+    this->addEditToolButton(0, 1, 1, 1, layout2, "▪", "5.", [&]() {
+        this->mLineWidth = 5;
+    });
+    this->addEditToolButton(0, 2, 1, 1, layout2, "●", "10.", [&]() {
+        this->mLineWidth = 10;
+    });
+
+    QToolButton *colorBtn = this->addEditToolButton(0, 3, 1, 1, layout2, " ", "10.", [&]() { });
+    colorBtn->setStyleSheet(tr("background-color: magenta;"));
+
+    layout->addLayout(layout1, 0, 0, 1, 1, Qt::AlignmentFlag::AlignLeft);
+    layout->addLayout(layout2, 1, 0, 1, 1, Qt::AlignmentFlag::AlignLeft);
+    layout2->addLayout(layout21, 0, 5, 4, 1, Qt::AlignmentFlag::AlignLeft);
+    
+    QStringList colorList = (QStringList() 
+        << tr("magenta") << tr("darkmagenta") << tr("cyan") << tr("darkcyan"))
+        << tr("red") << tr("darkred") << tr("blue") << tr("darkblue") 
+        << tr("yellow") << tr("darkyellow") << tr("green") << tr("darkgreen")
+        << tr("gray") << tr("black") << tr("white") << tr("orange");
+    int rowSize = 8;
+    for (int i = 0; i < colorList.size(); ++i) {
+        QString colorName = colorList.at(i);
+
+        QColor color(colorName);
+        QToolButton *btn = this->addEditToolButton(i / rowSize, i % rowSize, 1, 1, layout21, 
+            " ", colorName.toStdString().c_str(), [this, color, colorBtn]() {
+            this->mPenColor = color;
+            colorBtn->setStyleSheet(tr("background-color: %1;").arg(color.name()));
+        }, true);
+        btn->setStyleSheet(tr("background-color: %1;").arg(colorName));
+    }
+}
+
+QToolButton* QuickEditor::addEditToolButton(int row, int col, int rowSpan, int colSpan, QGridLayout* layout, 
+    const char *name, const char *toolTip, std::function<void ()> const &fn, bool halfSize) {
+    QToolButton *editButton = new QToolButton(this);
+    editButton->setContentsMargins(0, 0, 0, 0);
+    int size = halfSize ? 20 : 40;
+    editButton->setFixedHeight(size);
+    editButton->setFixedWidth(size);
+    editButton->setToolTip(i18n(toolTip));
+    QAction *editButtonAction = new QAction(i18n(name), this);
+    connect(editButtonAction, &QAction::triggered, this, fn);
+    editButton->setDefaultAction(editButtonAction);
+    layout->addWidget(editButton, row, col, rowSpan, colSpan, Qt::AlignmentFlag::AlignCenter);
+    return editButton;
+}
+
+void QuickEditor::showEditTools(bool show) {
+    if(show) {
+        qreal left = mSelection.x();
+        qreal top = mSelection.y() + mSelection.height();
+
+        mGridGroupBox->move(static_cast<int>(left), static_cast<int>(top));
+        mGridGroupBox->show();
+    } else {
+        mGridGroupBox->hide();
+    }
+}
+
+void QuickEditor::drawElements(QPainter &pt) {
+    pt.setBrush(Qt::NoBrush);
+    pt.setRenderHint(QPainter::Antialiasing, true);
+    QPen pen;
+    pen.setWidth(this->mLineWidth);
+    pen.setColor(this->mPenColor);
+    pen.setCapStyle(Qt::RoundCap);
+    pen.setJoinStyle(Qt::RoundJoin);
+    pt.setPen(pen);
+    switch(this->mEditToolState) {
+        case EditToolState::DrawLine:
+            pt.drawLine(this->mLine);
+            break;
+        case EditToolState::DrawRect:
+            pt.drawRect(this->mRect);
+            break;
+        case EditToolState::DrawCircle:
+            pt.drawEllipse(this->mRect);
+            break;
+        default:
+            break;
+    }
+}
+
+void QuickEditor::undo() {
+    this->mEditToolState = EditToolState::NoEdit;
+    if(this->history->size()) {
+        this->mPixmap = this->history->pop();
+    }
+    update();
 }
