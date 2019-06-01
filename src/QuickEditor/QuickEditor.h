@@ -30,6 +30,14 @@
 #include <utility>
 #include <vector>
 
+#include <QGroupBox>
+#include <QGridLayout>
+#include <QToolButton>
+
+#include <functional>
+
+#include <QStack>
+
 class QMouseEvent;
 
 class QuickEditor : public QWidget
@@ -58,6 +66,15 @@ private:
         RightOrLeft = Right & Left, // 100000
     };
 
+    enum EditToolState : short {
+        NoEdit = 0,
+        DrawLine,
+        DrawArrow,
+        DrawRect,
+        DrawCircle,
+        DrawText
+    };
+
     void acceptSelection();
     int boundsLeft(int newTopLeftX, const bool mouse = true);
     int boundsRight(int newTopLeftX, const bool mouse = true);
@@ -79,6 +96,17 @@ private:
     void layoutBottomHelpText();
     void setMouseCursor(const QPointF& pos);
     MouseState mouseLocation(const QPointF& pos);
+
+    void showEditTools(bool show);
+    void toggleDrawState(EditToolState state);
+
+    void initGui();
+
+    QToolButton* addEditToolButton(int row, int col, int rowSpan, int colSpan, QGridLayout * box, 
+        const char * name, const char * toolTip, std::function<void ()> const &fn, bool halfSize = false);
+    void drawElements(QPainter &pt);
+    void undo();
+
 
     static const qreal mouseAreaSize;
     static const qreal cornerHandleRadius;
@@ -119,6 +147,7 @@ private:
     QPoint mBottomHelpContentPos;
     int mBottomHelpGridLeftWidth;
     MouseState mMouseDragState;
+    EditToolState mEditToolState;
     QPixmap mPixmap;
     qreal dprI;
     QPointF mMousePos;
@@ -130,6 +159,14 @@ private:
     bool mDisableArrowKeys;
     QRect mPrimaryScreenGeo;
     int mbottomHelpLength;
+
+    QStack<QPixmap> *history;
+    QLineF mLine;
+    QRectF mRect;
+    int mLineWidth;
+    QColor mPenColor;
+
+    QGroupBox *mGridGroupBox;
 
 Q_SIGNALS:
     void grabDone(const QPixmap &pixmap);

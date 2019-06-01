@@ -42,14 +42,15 @@
 #include <QTimer>
 
 SpectacleCore::SpectacleCore(StartMode startMode, ImageGrabber::GrabMode grabMode, QString &saveFileName,
-               qint64 delayMsec, bool notifyOnGrab, QObject *parent) :
+               bool autoSaveToClipboard, qint64 delayMsec, bool notifyOnGrab, QObject *parent) :
     QObject(parent),
     mExportManager(ExportManager::instance()),
     mStartMode(startMode),
     mNotify(notifyOnGrab),
     mImageGrabber(nullptr),
     mMainWindow(nullptr),
-    isGuiInited(false)
+    isGuiInited(false),
+    isAutoSaveToClipboard(autoSaveToClipboard)
 {
     KSharedConfigPtr config = KSharedConfig::openConfig(QStringLiteral("spectaclerc"));
     KConfigGroup guiConfig(config, "GuiConfig");
@@ -106,6 +107,7 @@ SpectacleCore::SpectacleCore(StartMode startMode, ImageGrabber::GrabMode grabMod
     case BackgroundMode: {
             int msec = (KWindowSystem::compositingActive() ? 200 : 50) + delayMsec;
             QTimer::singleShot(msec, mImageGrabber, &ImageGrabber::doImageGrab);
+            //QTimer::singleShot(0, mImageGrabber, &ImageGrabber::doImageGrab);
         }
         break;
     case GuiMode:
@@ -229,7 +231,12 @@ void SpectacleCore::screenshotUpdated(const QPixmap &pixmap)
         }
         break;
     case GuiMode:
-        mMainWindow->setScreenshotAndShow(pixmap);
+        if(isAutoSaveToClipboard) {
+            mExportManager->doCopyToClipboard();
+            QTimer::singleShot(1000, mMainWindow, &KSMainWindow::close);
+        } else {
+            mMainWindow->setScreenshotAndShow(pixmap);
+        }
     }
 }
 
@@ -246,7 +253,11 @@ void SpectacleCore::screenshotFailed()
         emit allDone();
         return;
     case GuiMode:
-        mMainWindow->show();
+        if(isAutoSaveToClipboard) {
+            mMainWindow->close();
+        } else {
+            mMainWindow->show();
+        }
     }
 }
 
