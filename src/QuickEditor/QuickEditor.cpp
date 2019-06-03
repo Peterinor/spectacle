@@ -79,7 +79,8 @@ QuickEditor::QuickEditor(const QPixmap& pixmap) :
     history(new QStack<QPixmap>()),
     mLineWidth(2),
     mPenColor(Qt::GlobalColor::magenta),
-    mGridGroupBox(new QGroupBox(this))
+    mGridGroupBox(new QGroupBox(this)),
+    mEditBox(new QLineEdit())
 {
     this->initGui();
 
@@ -302,7 +303,7 @@ void QuickEditor::mousePressEvent(QMouseEvent* event)
         QPointF p = event->pos();
         switch (this->mEditToolState) {
         case EditToolState::DrawLine:
-            this->setCursor(Qt::CrossCursor);
+        case EditToolState::DrawArrow:
             this->mLine.setP1(p);
             this->mLine.setP2(p);
             break;
@@ -365,6 +366,7 @@ void QuickEditor::mouseMoveEvent(QMouseEvent* event)
             QPointF p = event->pos();
             switch (this->mEditToolState) {
             case EditToolState::DrawLine:
+            case EditToolState::DrawArrow:
                 this->mLine.setP2(p);
                 break;
             case EditToolState::DrawRect:
@@ -372,12 +374,16 @@ void QuickEditor::mouseMoveEvent(QMouseEvent* event)
                 this->mRect.setRight(p.x());
                 this->mRect.setBottom(p.y());
                 break;
-            case EditToolState::DrawText:
-                qDebug() << "" << endl;
-                break;
             default:
                 break;
             }
+            update();
+        }
+    } else {
+        if(mEditToolState == EditToolState::DrawText) {
+            QPointF p = event->pos();
+            this->mRect.setLeft(p.x());
+            this->mRect.setTop(p.y());
             update();
         }
     }
@@ -491,7 +497,7 @@ void QuickEditor::mouseReleaseEvent(QMouseEvent* event)
             }
             this->history->push(mPixmap.copy());
             QPainter painter(&mPixmap);
-            this->drawElements(painter);
+            this->drawElements(painter, true);
         } else {
             mDisableArrowKeys = false;
             if(mMouseDragState == MouseState::Inside) {
@@ -504,6 +510,11 @@ void QuickEditor::mouseReleaseEvent(QMouseEvent* event)
     } else if (button == Qt::RightButton) {
         mSelection.setWidth(0);
         mSelection.setHeight(0);
+        
+        while(!this->history->isEmpty()) {
+            this->mPixmap = this->history->pop();
+        }
+        mEditToolState = EditToolState::NoEdit;
     }
     event->accept();
     mMouseDragState = MouseState::None;
@@ -855,6 +866,11 @@ void QuickEditor::drawSelectionSizeTooltip(QPainter &painter)
 
 void QuickEditor::setMouseCursor(const QPointF& pos)
 {
+    if(mEditToolState != EditToolState::NoEdit) {
+        setCursor(Qt::CrossCursor);
+        return;
+    }
+
     MouseState mouseState = mouseLocation(pos);
     if (mouseState == MouseState::Outside) {
         setCursor(Qt::CrossCursor);
@@ -921,7 +937,6 @@ void QuickEditor::toggleDrawState(EditToolState status) {
     } else {
         this->mEditToolState = status;
     }
-    //qDebug() << this->mEditToolState << endl;
 }
 
 void QuickEditor::initGui() {
@@ -951,19 +966,19 @@ void QuickEditor::initGui() {
 
     this->addEditToolButton(0, 0, 1, 1, layout1, "－", "Draw Line.", [&]() {
         this->toggleDrawState(EditToolState::DrawLine);
-    });
+    }, true);
     this->addEditToolButton(0, 1, 1, 1, layout1, "→", "Draw Arrow.", [&]() {
         this->toggleDrawState(EditToolState::DrawArrow);
-    });
+    }, true);
     this->addEditToolButton(0, 2, 1, 1, layout1, "□", "Draw Rect.", [&]() {
         this->toggleDrawState(EditToolState::DrawRect);
-    });
+    }, true);
     this->addEditToolButton(0, 3, 1, 1, layout1, "○", "Draw circle.", [&]() {
         this->toggleDrawState(EditToolState::DrawCircle);
-    });
+    }, true);
     this->addEditToolButton(0, 4, 1, 1, layout1, "Ａ", "Draw Text.", [&]() {
         this->toggleDrawState(EditToolState::DrawText);
-    });
+    }, true);
     this->addEditToolButton(0, 5, 1, 1, layout1, "Ｕ", "undo.", [&]() {
         this->undo();
     });
@@ -976,51 +991,97 @@ void QuickEditor::initGui() {
 
     this->addEditToolButton(0, 0, 1, 1, layout2, "•", "2.", [&]() {
         this->mLineWidth = 2;
-    });
+    }, true)->setChecked(true);
     this->addEditToolButton(0, 1, 1, 1, layout2, "▪", "5.", [&]() {
-        this->mLineWidth = 5;
-    });
+        this->mLineWidth = 4;
+    }, true);
     this->addEditToolButton(0, 2, 1, 1, layout2, "●", "10.", [&]() {
-        this->mLineWidth = 10;
-    });
-
+        this->mLineWidth = 8;
+    }, true);
+    
     QToolButton *colorBtn = this->addEditToolButton(0, 3, 1, 1, layout2, " ", "10.", [&]() { });
     colorBtn->setStyleSheet(tr("background-color: magenta;"));
+    colorBtn->setEnabled(false);
+
+    QFrame *mDivider = new QFrame(this);
+    mDivider->setFrameShape(QFrame::VLine);
+    mDivider->setLineWidth(2);
+    layout2->addWidget(mDivider, 0, 4, 1, 1);
+    layout2->addWidget(mEditBox, 2, 0, 2, 4, Qt::AlignmentFlag::AlignLeft);
 
     layout->addLayout(layout1, 0, 0, 1, 1, Qt::AlignmentFlag::AlignLeft);
     layout->addLayout(layout2, 1, 0, 1, 1, Qt::AlignmentFlag::AlignLeft);
     layout2->addLayout(layout21, 0, 5, 4, 1, Qt::AlignmentFlag::AlignLeft);
     
     QStringList colorList = (QStringList() 
-        << tr("magenta") << tr("darkmagenta") << tr("cyan") << tr("darkcyan"))
-        << tr("red") << tr("darkred") << tr("blue") << tr("darkblue") 
-        << tr("yellow") << tr("darkyellow") << tr("green") << tr("darkgreen")
-        << tr("gray") << tr("black") << tr("white") << tr("orange");
+        << tr("magenta") << tr("darkmagenta") << tr("red") << tr("darkred") 
+        << tr("blue") << tr("darkblue") << tr("cyan") << tr("darkcyan"))
+        << tr("orange") << tr("fuchsia") << tr("tomato") << tr("purple")
+        << tr("yellow") << tr("green") << tr("darkgreen")
+        << tr("gray") << tr("silver") << tr("black") << tr("white") 
+        << tr("pink") << tr("deeppink") << tr("hotpink") 
+        << tr("goldenrod") << tr("darkgoldenrod") << tr("palegoldenrod") 
+        ;
+
     int rowSize = 8;
     for (int i = 0; i < colorList.size(); ++i) {
         QString colorName = colorList.at(i);
 
         QColor color(colorName);
         QToolButton *btn = this->addEditToolButton(i / rowSize, i % rowSize, 1, 1, layout21, 
-            " ", colorName.toStdString().c_str(), [this, color, colorBtn]() {
+            " ", " ", [this, color, colorBtn]() {
             this->mPenColor = color;
             colorBtn->setStyleSheet(tr("background-color: %1;").arg(color.name()));
-        }, true);
+        }, false, true);
+        btn->setToolTip(colorName);
         btn->setStyleSheet(tr("background-color: %1;").arg(colorName));
     }
 }
 
 QToolButton* QuickEditor::addEditToolButton(int row, int col, int rowSpan, int colSpan, QGridLayout* layout, 
-    const char *name, const char *toolTip, std::function<void ()> const &fn, bool halfSize) {
+    const char *name, const char *toolTip, std::function<void ()> const &fn, bool checkable, bool halfSize) {
     QToolButton *editButton = new QToolButton(this);
     editButton->setContentsMargins(0, 0, 0, 0);
     int size = halfSize ? 20 : 40;
     editButton->setFixedHeight(size);
     editButton->setFixedWidth(size);
     editButton->setToolTip(i18n(toolTip));
-    QAction *editButtonAction = new QAction(i18n(name), this);
-    connect(editButtonAction, &QAction::triggered, this, fn);
-    editButton->setDefaultAction(editButtonAction);
+    editButton->setAutoRaise(true);
+    editButton->setAutoFillBackground(false);
+    editButton->setText(i18n(name));
+
+    if(checkable) {
+        editButton->setCheckable(true);
+        connect(editButton, &QToolButton::clicked, this, [fn, editButton, layout]() {
+            if(editButton->isChecked()) {
+                QObjectList objs = layout->children();
+                QList<QToolButton *> allBtns = layout->findChildren<QToolButton *>();
+                int colSize = layout->columnCount();
+                int rowSize = layout->rowCount();
+                for(int i = 0; i < rowSize; i++) {
+                    for(int j = 0; j < colSize; j++) {
+                        QLayoutItem* item = layout->itemAtPosition(i, j);
+                        if(item && !item->isEmpty()) {
+                            QSizePolicy::ControlTypes types = item->controlTypes();
+                            if(types == QSizePolicy::ControlType::ToolButton) {
+                                QToolButton* w = (QToolButton*) item->widget();
+                                if(w != nullptr) {
+                                    if(editButton != w) {
+                                        w->setChecked(false);
+                                    }
+                                }
+                            }
+                        }
+
+                    }
+                }
+            } 
+            fn();
+        });
+    } else {
+        connect(editButton, &QToolButton::clicked, this, fn);
+    }
+
     layout->addWidget(editButton, row, col, rowSpan, colSpan, Qt::AlignmentFlag::AlignCenter);
     return editButton;
 }
@@ -1037,7 +1098,9 @@ void QuickEditor::showEditTools(bool show) {
     }
 }
 
-void QuickEditor::drawElements(QPainter &pt) {
+#define _USE_MATH_DEFINES
+#include <math.h>
+void QuickEditor::drawElements(QPainter &pt, bool effect) {
     pt.setBrush(Qt::NoBrush);
     pt.setRenderHint(QPainter::Antialiasing, true);
     QPen pen;
@@ -1046,15 +1109,68 @@ void QuickEditor::drawElements(QPainter &pt) {
     pen.setCapStyle(Qt::RoundCap);
     pen.setJoinStyle(Qt::RoundJoin);
     pt.setPen(pen);
+
     switch(this->mEditToolState) {
         case EditToolState::DrawLine:
+        case EditToolState::DrawArrow:
             pt.drawLine(this->mLine);
+            {
+                qreal dx = this->mLine.dx();
+                qreal dy = this->mLine.dy();
+                qreal length = sqrt(dx * dx + dy * dy);
+
+                QPointF p2 = this->mLine.p2();
+                qreal acosx = acos(dx / length) * 360 / (2 * M_PI);
+                if(dy < 0) {
+                    acosx = 360 - acosx;
+                }
+
+                if(!effect && length > 5 * this->mLineWidth) {
+                    QString tips = tr("%1@%2°")
+                        .arg(static_cast<int>(length)).arg(static_cast<int>(acosx));
+                    pt.drawText(p2, tips);
+                }
+                if(this->mEditToolState == EditToolState::DrawArrow) {
+                    // 大于两倍线长才画箭头，否则是直线
+                    if(length > this->mLineWidth * 2) {
+                        qreal arrowSize = this->mLineWidth * 5;
+
+                        qreal ang1 = acosx + 180 + 30;
+                        qreal ang2 = acosx + 180 - 30;
+
+                        QLineF line1 = QLineF::fromPolar(arrowSize, -ang1);
+                        line1.translate(p2);
+                        QLineF line2 = QLineF::fromPolar(arrowSize, -ang2);
+                        line2.translate(p2);
+                        pt.drawLine(line1);
+                        pt.drawLine(line2);
+                    }
+                }
+            }
             break;
         case EditToolState::DrawRect:
-            pt.drawRect(this->mRect);
-            break;
         case EditToolState::DrawCircle:
-            pt.drawEllipse(this->mRect);
+            if(this->mEditToolState == EditToolState::DrawRect) {
+                pt.drawRect(this->mRect);
+            } else {
+                pt.drawEllipse(this->mRect);
+            }
+            {
+                if(!effect) {
+                    QString tips = tr("%1×%2")
+                        .arg(abs(static_cast<int>(this->mRect.width())))
+                        .arg(abs(static_cast<int>(this->mRect.height())));
+                    pt.drawText(this->mRect.right(), this->mRect.bottom(), tips);
+                }
+            }
+            break;
+        case EditToolState::DrawText:
+            {
+                QFont font = pt.font();
+                font.setPointSize(this->mLineWidth * 5);
+                pt.setFont(font);
+                pt.drawText(this->mRect.left(), this->mRect.top(), this->mEditBox->text());
+            }
             break;
         default:
             break;
