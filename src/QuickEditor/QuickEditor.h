@@ -33,6 +33,7 @@
 #include <QGroupBox>
 #include <QGridLayout>
 #include <QToolButton>
+#include <QLineEdit>
 
 #include <functional>
 
@@ -103,8 +104,9 @@ private:
     void initGui();
 
     QToolButton* addEditToolButton(int row, int col, int rowSpan, int colSpan, QGridLayout * box, 
-        const char * name, const char * toolTip, std::function<void ()> const &fn, bool halfSize = false);
-    void drawElements(QPainter &pt);
+        const char * name, const char * toolTip, std::function<void ()> const &fn, 
+        bool checkable = false, bool halfSize = false);
+    void drawElements(QPainter &pt, bool effect = false);
     void undo();
 
 
@@ -167,6 +169,7 @@ private:
     QColor mPenColor;
 
     QGroupBox *mGridGroupBox;
+    QLineEdit *mEditBox;
 
 Q_SIGNALS:
     void grabDone(const QPixmap &pixmap);
