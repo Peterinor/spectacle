@@ -1178,9 +1178,13 @@ void QuickEditor::drawElements(QPainter &pt, bool effect) {
 }
 
 void QuickEditor::undo() {
+    EditToolState state = this->mEditToolState;
     this->mEditToolState = EditToolState::NoEdit;
     if(this->history->size()) {
         this->mPixmap = this->history->pop();
     }
     update();
+    QTimer::singleShot(200, this, [this, state]() {
+        this->mEditToolState = state;
+    });
 }
